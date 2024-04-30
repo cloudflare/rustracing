@@ -3,14 +3,14 @@
 //! # Examples
 //!
 //! ```
-//! use rustracing::sampler::AllSampler;
-//! use rustracing::tag::Tag;
-//! use rustracing::Tracer;
+//! use cf_rustracing::sampler::AllSampler;
+//! use cf_rustracing::tag::Tag;
+//! use cf_rustracing::Tracer;
 //! use std::thread;
 //! use std::time::Duration;
 //!
 //! # #[tokio::main]
-//! async fn main() {
+//! # async fn main() {
 //! // Creates a tracer
 //! let (tracer, mut span_rx) = Tracer::new(AllSampler);
 //! {

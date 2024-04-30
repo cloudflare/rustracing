@@ -29,7 +29,7 @@ impl<T> Span<T> {
     /// # Examples
     ///
     /// ```
-    /// use rustracing::span::Span;
+    /// use cf_rustracing::span::Span;
     ///
     /// let span = Span::<()>::inactive();
     /// assert!(! span.is_sampled());

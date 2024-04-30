@@ -9,8 +9,8 @@ use tokio::sync::mpsc;
 /// # Examples
 ///
 /// ```
-/// use rustracing::Tracer;
-/// use rustracing::sampler::AllSampler;
+/// use cf_rustracing::Tracer;
+/// use cf_rustracing::sampler::AllSampler;
 ///
 /// # #[tokio::main]
 /// # async fn main(){
