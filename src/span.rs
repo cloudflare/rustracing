@@ -8,11 +8,12 @@ use crate::Result;
 use std::borrow::Cow;
 use std::io::{Read, Write};
 use std::time::SystemTime;
+use tokio::sync::mpsc;
 
 /// Finished span receiver.
-pub type SpanReceiver<T> = crossbeam_channel::Receiver<FinishedSpan<T>>;
+pub type SpanReceiver<T> = mpsc::UnboundedReceiver<FinishedSpan<T>>;
 /// Sender of finished spans to the destination channel.
-pub type SpanSender<T> = crossbeam_channel::Sender<FinishedSpan<T>>;
+pub type SpanSender<T> = mpsc::UnboundedSender<FinishedSpan<T>>;
 
 /// Span.
 ///
@@ -28,7 +29,7 @@ impl<T> Span<T> {
     /// # Examples
     ///
     /// ```
-    /// use rustracing::span::Span;
+    /// use cf_rustracing::span::Span;
     ///
     /// let span = Span::<()>::inactive();
     /// assert!(! span.is_sampled());
@@ -223,7 +224,7 @@ impl<T> Drop for Span<T> {
                 logs: inner.logs,
                 context: inner.context,
             };
-            let _ = inner.span_tx.try_send(finished);
+            let _ = inner.span_tx.send(finished);
         }
     }
 }
@@ -628,7 +629,7 @@ impl<T> SpanHandle<T> {
 
     /// Returns the context of this span.
     pub fn context(&self) -> Option<&SpanContext<T>> {
-        self.0.as_ref().map(|&(ref context, _)| context)
+        self.0.as_ref().map(|(context, _)| context)
     }
 
     /// Gets the baggage item that has the name `name`.
@@ -647,7 +648,7 @@ impl<T> SpanHandle<T> {
         T: Clone,
         F: FnOnce(StartSpanOptions<AllSampler, T>) -> Span<T>,
     {
-        if let Some(&(ref context, ref span_tx)) = self.0.as_ref() {
+        if let Some((context, span_tx)) = self.0.as_ref() {
             let options =
                 StartSpanOptions::new(operation_name, span_tx, &AllSampler).child_of(context);
             f(options)
@@ -663,7 +664,7 @@ impl<T> SpanHandle<T> {
         T: Clone,
         F: FnOnce(StartSpanOptions<AllSampler, T>) -> Span<T>,
     {
-        if let Some(&(ref context, ref span_tx)) = self.0.as_ref() {
+        if let Some((context, span_tx)) = self.0.as_ref() {
             let options =
                 StartSpanOptions::new(operation_name, span_tx, &AllSampler).follows_from(context);
             f(options)

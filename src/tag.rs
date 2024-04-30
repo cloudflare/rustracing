@@ -12,7 +12,7 @@ impl Tag {
     /// # Examples
     ///
     /// ```
-    /// use rustracing::tag::{Tag, TagValue};
+    /// use cf_rustracing::tag::{Tag, TagValue};
     ///
     /// let tag = Tag::new("foo", "bar");
     /// assert_eq!(tag.name(), "foo");
