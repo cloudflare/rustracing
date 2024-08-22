@@ -2,9 +2,10 @@
 use crate::span::CandidateSpan;
 use crate::{ErrorKind, Result};
 use rand::{self, Rng};
+use std::fmt::Debug;
 
 /// `Sampler` decides whether a new trace should be sampled or not.
-pub trait Sampler<T> {
+pub trait Sampler<T>: Debug {
     /// This method decides whether a trace with given `span` should be sampled.
     fn is_sampled(&self, span: &CandidateSpan<T>) -> bool;
 
