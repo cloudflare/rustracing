@@ -673,3 +673,71 @@ impl<T> SpanHandle<T> {
         }
     }
 }
+
+/// Extension trait for inspecting an in-progress `Span`.
+pub trait InspectableSpan<T> {
+    /// Returns the operation name of this span.
+    fn operation_name(&self) -> &str;
+
+    /// Returns the start time of this span.
+    fn start_time(&self) -> SystemTime;
+
+    /// Returns the finish time of this span, if it has finished.
+    fn finish_time(&self) -> Option<SystemTime>;
+
+    /// Returns the logs recorded during this span.
+    fn logs(&self) -> &[Log];
+
+    /// Returns the tags of this span.
+    fn tags(&self) -> &[Tag];
+
+    /// Returns the references of this span.
+    fn references(&self) -> &[SpanReference<T>];
+}
+
+impl<T> InspectableSpan<T> for Span<T> {
+    /// Returns the operation name of this span.
+    fn operation_name(&self) -> &str {
+        self.0
+            .as_ref()
+            .map(|inner| inner.operation_name.as_ref())
+            .unwrap_or("")
+    }
+
+    /// Returns the start time of this span.
+    fn start_time(&self) -> SystemTime {
+        self.0
+            .as_ref()
+            .map(|inner| inner.start_time)
+            .unwrap_or_else(SystemTime::now)
+    }
+
+    /// Returns the finish time of this span.
+    fn finish_time(&self) -> Option<SystemTime> {
+        self.0.as_ref().and_then(|inner| inner.finish_time)
+    }
+
+    /// Returns the logs recorded during this span.
+    fn logs(&self) -> &[Log] {
+        self.0
+            .as_ref()
+            .map(|inner| inner.logs.as_ref())
+            .unwrap_or(&[])
+    }
+
+    /// Returns the tags of this span.
+    fn tags(&self) -> &[Tag] {
+        self.0
+            .as_ref()
+            .map(|inner| inner.tags.as_ref())
+            .unwrap_or(&[])
+    }
+
+    /// Returns the references of this span.
+    fn references(&self) -> &[SpanReference<T>] {
+        self.0
+            .as_ref()
+            .map(|inner| inner.references.as_ref())
+            .unwrap_or(&[])
+    }
+}
