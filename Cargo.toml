@@ -1,6 +1,6 @@
 [package]
 name = "cf-rustracing"
-version = "1.0.1"
+version = "1.1.0"
 authors = ["Takeru Ohta <phjgt308@gmail.com>", "Cloudflare Inc."]
 description = "OpenTracing API for Rust"
 homepage = "https://github.com/cloudflare/rustracing"
