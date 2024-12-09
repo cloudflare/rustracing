@@ -118,7 +118,7 @@ where
 /// [the standard log fields]: https://github.com/opentracing/specification/blob/master/semantic_conventions.md#log-fields-table
 #[derive(Debug)]
 pub struct StdLogFieldsBuilder<'a>(&'a mut LogBuilder);
-impl<'a> StdLogFieldsBuilder<'a> {
+impl StdLogFieldsBuilder<'_> {
     /// Adds the field `LogField::new("event", event)`.
     ///
     /// `event` is a stable identifier for some notable moment in the lifetime of a Span.
@@ -166,7 +166,7 @@ impl<'a> StdLogFieldsBuilder<'a> {
 /// [the standard error log fields]: https://github.com/opentracing/specification/blob/master/semantic_conventions.md#log-fields-table
 #[derive(Debug)]
 pub struct StdErrorLogFieldsBuilder<'a>(&'a mut LogBuilder);
-impl<'a> StdErrorLogFieldsBuilder<'a> {
+impl StdErrorLogFieldsBuilder<'_> {
     /// Adds the field `LogField::new("error.kind", kind)`.
     ///
     /// `kind` is the type or "kind" of an error.
