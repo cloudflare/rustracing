@@ -71,7 +71,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 mod tests {
     use super::*;
     use crate::sampler::AllSampler;
-    use crate::tag::{StdTag, Tag};
+    use crate::span::{FinishedSpan, Span};
+    use crate::tag::{StdTag, Tag, TagValue};
+    use std::sync::atomic::{AtomicI64, Ordering};
     use std::thread;
     use std::time::Duration;
 
@@ -118,5 +120,58 @@ mod tests {
 
         let span = span_rx.recv().await.unwrap();
         assert_eq!(span.operation_name(), "parent");
+    }
+
+    #[test]
+    fn finish_callback() {
+        let span_counter = AtomicI64::new(1);
+        let finish_cb = move |span: &mut Span<()>| {
+            let call_num = span_counter.fetch_add(1, Ordering::Relaxed);
+            span.set_tag(|| Tag::new("callback-call", call_num));
+        };
+
+        let (tracer, mut span_rx) = Tracer::new(AllSampler);
+        {
+            let parent_span = tracer
+                .span("parent")
+                .finish_callback(finish_cb)
+                .start_with_state(());
+
+            let child_with_cb = parent_span.child("child_with_cb", |s| s.start_with_state(()));
+            let mut child_no_cb = parent_span.child("child_no_cb", |s| s.start_with_state(()));
+            child_no_cb.take_finish_callback();
+
+            drop(child_with_cb);
+            drop(child_no_cb);
+            drop(parent_span);
+        }
+
+        let find_span_counter = |s: &FinishedSpan<()>| match s
+            .tags()
+            .iter()
+            .find(|t| t.name() == "callback-call")?
+            .value()
+        {
+            TagValue::Integer(v) => Some(*v),
+            v => panic!("invalid `callback-call` tag value: {v:?}"),
+        };
+
+        let child_with_cb = span_rx.try_recv().unwrap();
+        assert_eq!(child_with_cb.operation_name(), "child_with_cb");
+        assert_eq!(find_span_counter(&child_with_cb), Some(1));
+
+        let child_no_cb = span_rx.try_recv().unwrap();
+        assert_eq!(child_no_cb.operation_name(), "child_no_cb");
+        assert_eq!(find_span_counter(&child_no_cb), None);
+
+        let parent_span = span_rx.try_recv().unwrap();
+        assert_eq!(parent_span.operation_name(), "parent");
+        assert_eq!(find_span_counter(&parent_span), Some(2));
+    }
+
+    #[allow(dead_code)]
+    fn span_can_be_shared() {
+        fn trait_check<T: Send + Sync>() {}
+        trait_check::<Span<()>>();
     }
 }
