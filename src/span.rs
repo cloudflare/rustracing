@@ -6,7 +6,9 @@ use crate::sampler::{AllSampler, Sampler};
 use crate::tag::{StdTag, Tag, TagValue};
 use crate::Result;
 use std::borrow::Cow;
+use std::fmt;
 use std::io::{Read, Write};
+use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::sync::mpsc;
 
@@ -14,6 +16,40 @@ use tokio::sync::mpsc;
 pub type SpanReceiver<T> = mpsc::UnboundedReceiver<FinishedSpan<T>>;
 /// Sender of finished spans to the destination channel.
 pub type SpanSender<T> = mpsc::UnboundedSender<FinishedSpan<T>>;
+
+/// Callback to execute before a [`Span`] is finalized.
+pub struct FinishSpanCallback<T>(FinishCallbackInner<T>);
+type FinishCallbackInner<T> = Arc<dyn Fn(&mut Span<T>) + Send + Sync>;
+
+impl<T> fmt::Debug for FinishSpanCallback<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("FinishSpanCallback")
+    }
+}
+
+impl<T> Clone for FinishSpanCallback<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<T> From<FinishSpanCallback<T>> for FinishCallbackInner<T> {
+    fn from(v: FinishSpanCallback<T>) -> Self {
+        v.0
+    }
+}
+
+impl<T> From<FinishCallbackInner<T>> for FinishSpanCallback<T> {
+    fn from(v: FinishCallbackInner<T>) -> Self {
+        Self(v)
+    }
+}
+
+impl<T, F: Fn(&mut Span<T>) + Send + Sync + 'static> From<F> for FinishSpanCallback<T> {
+    fn from(v: F) -> Self {
+        Self(Arc::new(v))
+    }
+}
 
 /// Span.
 ///
@@ -89,6 +125,25 @@ impl<T> Span<T> {
         if let Some(inner) = self.0.as_mut() {
             inner.finish_time = Some(f());
         }
+    }
+
+    /// Sets the finish callback for this span.
+    pub fn set_finish_callback<C>(&mut self, cb: C)
+    where
+        C: Into<FinishSpanCallback<T>>,
+    {
+        if let Some(inner) = &mut self.0 {
+            inner.finish_cb = Some(cb.into());
+        }
+    }
+
+    /// Extracts any inherited or explicitly added finish callback from this span.
+    ///
+    /// This can be used either to unset the callback, by discarding the returned value,
+    /// or to wrap it in a new callback.
+    #[doc(alias = "remove_finish_callback")]
+    pub fn take_finish_callback(&mut self) -> Option<FinishSpanCallback<T>> {
+        self.0.as_mut().and_then(|s| s.finish_cb.take())
     }
 
     /// Sets the tag to this span.
@@ -170,13 +225,21 @@ impl<T> Span<T> {
     }
 
     /// Starts a `ChildOf` span if this span is sampled.
+    ///
+    /// The child will inherit this span's finish callback, if it has one. To avoid
+    /// this kind of inheritance, you can use `span.handle().child(...)` instead.
     pub fn child<N, F>(&self, operation_name: N, f: F) -> Span<T>
     where
         N: Into<Cow<'static, str>>,
         T: Clone,
         F: FnOnce(StartSpanOptions<AllSampler, T>) -> Span<T>,
     {
-        self.handle().child(operation_name, f)
+        self.handle().child(operation_name, move |mut opts| {
+            if let Some(finish_cb) = self.0.as_ref().and_then(|s| s.finish_cb.clone()) {
+                opts = opts.finish_callback(finish_cb);
+            }
+            f(opts)
+        })
     }
 
     /// Starts a `FollowsFrom` span if this span is sampled.
@@ -189,31 +252,28 @@ impl<T> Span<T> {
         self.handle().follower(operation_name, f)
     }
 
-    pub(crate) fn new(
-        operation_name: Cow<'static, str>,
-        start_time: SystemTime,
-        references: Vec<SpanReference<T>>,
-        tags: Vec<Tag>,
-        state: T,
-        baggage_items: Vec<BaggageItem>,
-        span_tx: SpanSender<T>,
-    ) -> Self {
-        let context = SpanContext::new(state, baggage_items);
+    pub(crate) fn new<S>(state: T, opts: StartSpanOptions<S, T>) -> Self {
+        let context = SpanContext::new(state, opts.baggage_items);
         let inner = SpanInner {
-            operation_name,
-            start_time,
+            operation_name: opts.operation_name,
+            start_time: opts.start_time.unwrap_or_else(SystemTime::now),
             finish_time: None,
-            references,
-            tags,
+            references: opts.references,
+            tags: opts.tags,
             logs: Vec::new(),
             context,
-            span_tx,
+            finish_cb: opts.finish_cb,
+            span_tx: opts.span_tx.clone(),
         };
         Span(Some(inner))
     }
 }
 impl<T> Drop for Span<T> {
     fn drop(&mut self) {
+        if let Some(finish_cb) = self.take_finish_callback() {
+            finish_cb.0(self);
+        }
+
         if let Some(inner) = self.0.take() {
             let finished = FinishedSpan {
                 operation_name: inner.operation_name,
@@ -243,6 +303,7 @@ struct SpanInner<T> {
     tags: Vec<Tag>,
     logs: Vec<Log>,
     context: SpanContext<T>,
+    finish_cb: Option<FinishSpanCallback<T>>,
     span_tx: SpanSender<T>,
 }
 
@@ -484,6 +545,7 @@ pub struct StartSpanOptions<'a, S: 'a, T: 'a> {
     tags: Vec<Tag>,
     references: Vec<SpanReference<T>>,
     baggage_items: Vec<BaggageItem>,
+    finish_cb: Option<FinishSpanCallback<T>>,
     span_tx: &'a SpanSender<T>,
     sampler: &'a S,
 }
@@ -500,6 +562,15 @@ where
     /// Sets the tag to this span.
     pub fn tag(mut self, tag: Tag) -> Self {
         self.tags.push(tag);
+        self
+    }
+
+    /// Sets the finish callback for this span.
+    pub fn finish_callback<C>(mut self, cb: C) -> Self
+    where
+        C: Into<FinishSpanCallback<T>>,
+    {
+        self.finish_cb = Some(cb.into());
         self
     }
 
@@ -543,15 +614,7 @@ where
             return Span(None);
         }
         let state = T::from(self.span());
-        Span::new(
-            self.operation_name,
-            self.start_time.unwrap_or_else(SystemTime::now),
-            self.references,
-            self.tags,
-            state,
-            self.baggage_items,
-            self.span_tx.clone(),
-        )
+        Span::new(state, self)
     }
 
     /// Starts a new span with the explicit `state`.
@@ -560,15 +623,7 @@ where
         if !self.is_sampled() {
             return Span(None);
         }
-        Span::new(
-            self.operation_name,
-            self.start_time.unwrap_or_else(SystemTime::now),
-            self.references,
-            self.tags,
-            state,
-            self.baggage_items,
-            self.span_tx.clone(),
-        )
+        Span::new(state, self)
     }
 
     pub(crate) fn new<N>(operation_name: N, span_tx: &'a SpanSender<T>, sampler: &'a S) -> Self
@@ -581,6 +636,7 @@ where
             tags: Vec::new(),
             references: Vec::new(),
             baggage_items: Vec::new(),
+            finish_cb: None,
             span_tx,
             sampler,
         }
@@ -596,7 +652,7 @@ where
         self.baggage_items.dedup_by(|a, b| a.name() == b.name());
     }
 
-    fn span(&self) -> CandidateSpan<T> {
+    fn span(&self) -> CandidateSpan<'_, T> {
         CandidateSpan {
             references: &self.references,
             tags: &self.tags,
