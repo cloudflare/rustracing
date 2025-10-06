@@ -70,7 +70,7 @@ impl<T> Span<T> {
     /// let span = Span::<()>::inactive();
     /// assert!(! span.is_sampled());
     /// ```
-    pub fn inactive() -> Self {
+    pub const fn inactive() -> Self {
         Span(None)
     }
 
