@@ -12,10 +12,65 @@ use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::sync::mpsc;
 
-/// Finished span receiver.
+/// Generic interface to receive [`FinishedSpan`]s from rustracing.
+pub trait SpanConsumer<T>: Send + Sync {
+    /// Consumes a [`FinishedSpan`] when the application closes a span.
+    ///
+    /// This should not block the caller for any significant amount of time.
+    /// It is better to drop spans if the consumer is overloaded.
+    fn consume_span(&self, span: FinishedSpan<T>);
+}
+
+impl<T: Send> SpanConsumer<T> for mpsc::UnboundedSender<FinishedSpan<T>> {
+    fn consume_span(&self, span: FinishedSpan<T>) {
+        let _ = self.send(span);
+    }
+}
+
+impl<T: Send> SpanConsumer<T> for mpsc::Sender<FinishedSpan<T>> {
+    fn consume_span(&self, span: FinishedSpan<T>) {
+        let _ = self.try_send(span);
+    }
+}
+
+impl<T: Send> SpanConsumer<T> for std::sync::mpsc::Sender<FinishedSpan<T>> {
+    fn consume_span(&self, span: FinishedSpan<T>) {
+        let _ = self.send(span);
+    }
+}
+
+impl<T: Send> SpanConsumer<T> for std::sync::mpsc::SyncSender<FinishedSpan<T>> {
+    fn consume_span(&self, span: FinishedSpan<T>) {
+        let _ = self.try_send(span);
+    }
+}
+
+/// Unbounded [`tokio::sync::mpsc`] receiver for finished spans.
 pub type SpanReceiver<T> = mpsc::UnboundedReceiver<FinishedSpan<T>>;
-/// Sender of finished spans to the destination channel.
+/// Deprecated: alias for default [`SpanConsumer`] implementation.
+#[deprecated = "SpanSender is an implementation detail of rustracing. It should not be public."]
 pub type SpanSender<T> = mpsc::UnboundedSender<FinishedSpan<T>>;
+
+/// An `Arc<dyn SpanConsumer>` wrapper to implement `Debug` on.
+pub(crate) struct SharedSpanConsumer<T>(Arc<dyn SpanConsumer<T>>);
+
+impl<T> SharedSpanConsumer<T> {
+    pub(crate) fn new(consumer: impl SpanConsumer<T> + 'static) -> Self {
+        Self(Arc::new(consumer))
+    }
+}
+
+impl<T> fmt::Debug for SharedSpanConsumer<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("SharedSpanConsumer")
+    }
+}
+
+impl<T> Clone for SharedSpanConsumer<T> {
+    fn clone(&self) -> Self {
+        Self(Arc::clone(&self.0))
+    }
+}
 
 /// Callback to execute before a [`Span`] is finalized.
 pub struct FinishSpanCallback<T>(FinishCallbackInner<T>);
@@ -284,7 +339,7 @@ impl<T> Drop for Span<T> {
                 logs: inner.logs,
                 context: inner.context,
             };
-            let _ = inner.span_tx.send(finished);
+            inner.span_tx.0.consume_span(finished);
         }
     }
 }
@@ -304,7 +359,7 @@ struct SpanInner<T> {
     logs: Vec<Log>,
     context: SpanContext<T>,
     finish_cb: Option<FinishSpanCallback<T>>,
-    span_tx: SpanSender<T>,
+    span_tx: SharedSpanConsumer<T>,
 }
 
 /// Finished span.
@@ -546,7 +601,7 @@ pub struct StartSpanOptions<'a, S: 'a, T: 'a> {
     references: Vec<SpanReference<T>>,
     baggage_items: Vec<BaggageItem>,
     finish_cb: Option<FinishSpanCallback<T>>,
-    span_tx: &'a SpanSender<T>,
+    span_tx: &'a SharedSpanConsumer<T>,
     sampler: &'a S,
 }
 impl<'a, S: 'a, T: 'a> StartSpanOptions<'a, S, T>
@@ -626,7 +681,11 @@ where
         Span::new(state, self)
     }
 
-    pub(crate) fn new<N>(operation_name: N, span_tx: &'a SpanSender<T>, sampler: &'a S) -> Self
+    pub(crate) fn new<N>(
+        operation_name: N,
+        span_tx: &'a SharedSpanConsumer<T>,
+        sampler: &'a S,
+    ) -> Self
     where
         N: Into<Cow<'static, str>>,
     {
@@ -676,7 +735,7 @@ where
 
 /// Immutable handle of `Span`.
 #[derive(Debug, Clone)]
-pub struct SpanHandle<T>(Option<(SpanContext<T>, SpanSender<T>)>);
+pub struct SpanHandle<T>(Option<(SpanContext<T>, SharedSpanConsumer<T>)>);
 impl<T> SpanHandle<T> {
     /// Returns `true` if this span is sampled (i.e., being traced).
     pub fn is_sampled(&self) -> bool {

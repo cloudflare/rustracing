@@ -1,5 +1,5 @@
 use crate::sampler::Sampler;
-use crate::span::{SpanReceiver, SpanSender, StartSpanOptions};
+use crate::span::{SharedSpanConsumer, SpanConsumer, SpanReceiver, StartSpanOptions};
 use std::borrow::Cow;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -25,20 +25,22 @@ use tokio::sync::mpsc;
 #[derive(Debug)]
 pub struct Tracer<S, T> {
     sampler: Arc<S>,
-    span_tx: SpanSender<T>,
+    span_tx: SharedSpanConsumer<T>,
 }
-impl<S: Sampler<T>, T> Tracer<S, T> {
-    /// Makes a new `Tracer` instance.
+impl<S: Sampler<T>, T: Send + 'static> Tracer<S, T> {
+    /// Makes a new `Tracer` instance with an unbounded [`tokio::sync::mpsc`] channel.
     pub fn new(sampler: S) -> (Self, SpanReceiver<T>) {
         let (span_tx, span_rx) = mpsc::unbounded_channel();
-
-        (
-            Tracer {
-                sampler: Arc::new(sampler),
-                span_tx,
-            },
-            span_rx,
-        )
+        (Self::with_consumer(sampler, span_tx), span_rx)
+    }
+}
+impl<S: Sampler<T>, T> Tracer<S, T> {
+    /// Makes a new `Tracer` instance with a custom consumer implementation.
+    pub fn with_consumer<C: SpanConsumer<T> + 'static>(sampler: S, consumer: C) -> Self {
+        Self {
+            sampler: Arc::new(sampler),
+            span_tx: SharedSpanConsumer::new(consumer),
+        }
     }
 
     /// Returns `StartSpanOptions` for starting a span which has the name `operation_name`.
