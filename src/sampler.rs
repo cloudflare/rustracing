@@ -1,7 +1,6 @@
 //! `Sampler` trait and its built-in implementations.
 use crate::span::CandidateSpan;
 use crate::{ErrorKind, Result};
-use rand::{self, Rng};
 use std::fmt::Debug;
 
 /// `Sampler` decides whether a new trace should be sampled or not.
@@ -70,7 +69,7 @@ impl ProbabilisticSampler {
 }
 impl<T> Sampler<T> for ProbabilisticSampler {
     fn is_sampled(&self, _span: &CandidateSpan<T>) -> bool {
-        rand::thread_rng().gen_range(0.0..1.0) < self.sampling_rate
+        rand::random_range(0.0..1.0) < self.sampling_rate
     }
 }
 
