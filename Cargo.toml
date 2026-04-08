@@ -21,7 +21,7 @@ default = [ "stacktrace" ]
 [dependencies]
 backtrace = { version = "0.3", optional = true }
 tokio = { version = "1", features = ["sync"] }
-rand = "0.8.1"
+rand = "0.10"
 trackable = "1.2"
 
 [dev-dependencies]
