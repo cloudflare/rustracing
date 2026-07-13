@@ -292,8 +292,9 @@ impl<T> Span<T> {
 
     /// Starts a `ChildOf` span if this span is sampled.
     ///
-    /// The child will inherit this span's finish callback, if it has one. To avoid
-    /// this kind of inheritance, you can use `span.handle().child(...)` instead.
+    /// The child will inherit this span's finish callback and routing metadata,
+    /// if set. To avoid this kind of inheritance, you can use
+    /// `span.handle().child(...)` instead.
     pub fn child<N, F>(&self, operation_name: N, f: F) -> Span<T>
     where
         N: Into<Cow<'static, str>>,
