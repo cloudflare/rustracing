@@ -212,6 +212,32 @@ impl<T> Span<T> {
         self.0.as_mut().and_then(|s| s.finish_cb.take())
     }
 
+    /// Discards this span, so it is never sent to the associated `SpanReceiver`.
+    ///
+    /// The finish callback, if any, is dropped without being called. Afterwards the span behaves
+    /// like an [inactive](Self::inactive) one.
+    ///
+    /// Children of this span that were already finished, and contexts propagated from it, keep
+    /// referencing this span, which will never be received.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use cf_rustracing::sampler::AllSampler;
+    /// use cf_rustracing::Tracer;
+    ///
+    /// let (tracer, mut span_rx) = Tracer::new(AllSampler);
+    /// let mut span = tracer.span("discarded").start_with_state(());
+    /// span.discard();
+    /// assert!(!span.is_sampled());
+    /// drop(span);
+    /// assert!(span_rx.try_recv().is_err());
+    /// ```
+    pub fn discard(&mut self) {
+        self.take_finish_callback();
+        self.0 = None;
+    }
+
     /// Sets the tag to this span.
     pub fn set_tag<F>(&mut self, f: F)
     where
