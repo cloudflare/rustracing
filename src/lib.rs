@@ -186,6 +186,53 @@ mod tests {
         assert_eq!(find_span_counter(&parent_span), Some(2));
     }
 
+    #[test]
+    fn discarded_span_is_not_received() {
+        let (tracer, mut span_rx) = Tracer::new(AllSampler);
+        {
+            let parent = tracer.span("parent").start_with_state(());
+            let mut discarded = parent.child("discarded", |s| s.start_with_state(()));
+            let sibling = parent.child("sibling", |s| s.start_with_state(()));
+
+            discarded.discard();
+            discarded.set_tag(|| Tag::new("key", "value"));
+            discarded.log(|log| {
+                log.std().message("ignored");
+            });
+            assert!(!discarded.is_sampled());
+            assert!(discarded.context().is_none());
+
+            drop(discarded);
+            drop(sibling);
+            drop(parent);
+        }
+
+        assert_eq!(span_rx.try_recv().unwrap().operation_name(), "sibling");
+        assert_eq!(span_rx.try_recv().unwrap().operation_name(), "parent");
+        assert!(span_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn discarded_span_does_not_run_finish_callback() {
+        let calls = Arc::new(AtomicI64::new(0));
+        let (tracer, mut span_rx) = Tracer::new(AllSampler);
+        {
+            let calls = Arc::clone(&calls);
+            let mut span = tracer
+                .span("span")
+                .finish_callback(move |_: &mut Span<()>| {
+                    calls.fetch_add(1, Ordering::Relaxed);
+                })
+                .start_with_state(());
+
+            span.discard();
+            span.discard();
+        }
+
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+        assert!(span_rx.try_recv().is_err());
+    }
+
     #[allow(dead_code)]
     fn span_can_be_shared() {
         fn trait_check<T: Send + Sync>() {}
